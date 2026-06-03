@@ -3,6 +3,7 @@ import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader";
 
 export interface LoadedModel {
   object: THREE.Object3D;
+  center: THREE.Vector3;
   maxDim: number;
   isMesh: boolean;
   hasColor: boolean;
@@ -39,7 +40,6 @@ function processGeometry(geo: THREE.BufferGeometry): LoadedModel {
   const box = geo.boundingBox!;
   const center = new THREE.Vector3();
   box.getCenter(center);
-  geo.translate(-center.x, -center.y, -center.z);
 
   const size = new THREE.Vector3();
   box.getSize(size);
@@ -74,6 +74,7 @@ function processGeometry(geo: THREE.BufferGeometry): LoadedModel {
 
   return {
     object,
+    center,
     maxDim,
     isMesh,
     hasColor,

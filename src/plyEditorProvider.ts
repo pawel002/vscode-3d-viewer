@@ -31,7 +31,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
-    const fileDir = vscode.Uri.file(path.dirname(document.uri.fsPath));
+    const dirPath = path.dirname(document.uri.fsPath);
+    const fileDir = vscode.Uri.file(dirPath);
 
     webviewPanel.webview.options = {
       enableScripts: true,
@@ -41,17 +42,33 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
       ],
     };
 
-    // Collect sibling .ply files from the same directory
-    const dirPath = path.dirname(document.uri.fsPath);
+    // Collect sibling .ply files and their initial mtimes
     const siblingNames: string[] = fs
       .readdirSync(dirPath)
       .filter((f) => f.toLowerCase().endsWith(".ply"))
       .sort();
-    const siblingUris = siblingNames.map((name) =>
-      webviewPanel.webview
-        .asWebviewUri(vscode.Uri.file(path.join(dirPath, name)))
-        .toString(),
+
+    const siblingFsPaths = siblingNames.map((name) => path.join(dirPath, name));
+
+    const siblingUris = siblingFsPaths.map((p) =>
+      webviewPanel.webview.asWebviewUri(vscode.Uri.file(p)).toString(),
     );
+
+    const siblingMtimes = siblingFsPaths.map((p) => {
+      try { return fs.statSync(p).mtimeMs; } catch { return 0; }
+    });
+
+    // Handle mtime queries from the webview cache module
+    const listener = webviewPanel.webview.onDidReceiveMessage(async (msg) => {
+      if (msg.type !== "getMtimes") return;
+      const result: Record<string, number | null> = {};
+      for (const p of msg.paths as string[]) {
+        try { result[p] = fs.statSync(p).mtimeMs; }
+        catch { result[p] = null; }
+      }
+      await webviewPanel.webview.postMessage({ type: "mtimes", data: result });
+    });
+    webviewPanel.onDidDispose(() => listener.dispose());
 
     const fileUri = webviewPanel.webview.asWebviewUri(document.uri);
     webviewPanel.webview.html = this.getHtmlForWebview(
@@ -60,6 +77,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
       document.uri,
       siblingNames,
       siblingUris,
+      siblingFsPaths,
+      siblingMtimes,
     );
   }
 
@@ -69,6 +88,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     originalUri: vscode.Uri,
     siblingNames: string[],
     siblingUris: string[],
+    siblingFsPaths: string[],
+    siblingMtimes: number[],
   ): string {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "media", "viewer.js"),
@@ -102,6 +123,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         window.plyFileName = ${JSON.stringify(filename)};
         window.plySiblingNames = ${JSON.stringify(siblingNames)};
         window.plySiblingUris = ${JSON.stringify(siblingUris)};
+        window.plySiblingFsPaths = ${JSON.stringify(siblingFsPaths)};
+        window.plySiblingMtimes = ${JSON.stringify(siblingMtimes)};
     </script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>

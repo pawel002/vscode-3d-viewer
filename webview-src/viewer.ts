@@ -15,6 +15,16 @@ import {
   createControlsHint,
   createFileBrowser,
 } from "./ui";
+import {
+  isReady,
+  getModel,
+  getCachedMtime,
+  store,
+  evict,
+  schedulePrefetch,
+  checkMtime,
+  PrefetchItem,
+} from "./cache";
 
 declare global {
   interface Window {
@@ -22,6 +32,8 @@ declare global {
     plyFileName: string;
     plySiblingNames: string[];
     plySiblingUris: string[];
+    plySiblingFsPaths: string[];
+    plySiblingMtimes: number[];
   }
 }
 
@@ -50,11 +62,15 @@ class PlyViewer {
 
   private siblingNames: string[];
   private siblingUris: string[];
+  private siblingFsPaths: string[];
+  private siblingMtimes: number[];
   private currentIndex: number;
 
   constructor() {
     this.siblingNames = window.plySiblingNames ?? [];
     this.siblingUris = window.plySiblingUris ?? [];
+    this.siblingFsPaths = window.plySiblingFsPaths ?? [];
+    this.siblingMtimes = window.plySiblingMtimes ?? [];
     this.currentIndex = Math.max(0, this.siblingNames.indexOf(window.plyFileName));
 
     this.scene = new THREE.Scene();
@@ -192,32 +208,63 @@ class PlyViewer {
 
   private loadFile(index: number, preserveCamera: boolean): void {
     if (this.isLoading) return;
+
+    const uri = this.siblingUris[index] ?? window.plyFileUri;
+    const fsPath = this.siblingFsPaths[index] ?? "";
+    const name = this.siblingNames[index] ?? window.plyFileName;
+    const knownMtime = this.siblingMtimes[index] ?? 0;
+
+    if (isReady(uri)) {
+      // ── Cache hit: instant swap ──────────────────────────────────────
+      this.currentIndex = index;
+      this.removeCurrentFromScene();
+      this.applyModel(getModel(uri)!, preserveCamera, name);
+      createFileBrowser(this.siblingNames, index, (i) => this.loadFile(i, true));
+      this.kickoffPrefetch(index);
+
+      // Verify freshness in background; reload silently if stale
+      checkMtime(fsPath, (freshMtime) => {
+        if (freshMtime === null) {
+          evict(uri);
+          return;
+        }
+        if (freshMtime === getCachedMtime(uri)) return;
+
+        loadPly(
+          uri,
+          () => {},
+          (freshModel) => {
+            store(uri, freshMtime, freshModel);
+            if (this.currentIndex === index) {
+              this.removeCurrentFromScene();
+              this.applyModel(freshModel, true, name);
+            }
+          },
+          () => {},
+        );
+      });
+
+      return;
+    }
+
+    // ── Cache miss: load with progress overlay ───────────────────────
     this.isLoading = true;
     this.currentIndex = index;
 
-    const uri = this.siblingUris.length > 0 ? this.siblingUris[index] : window.plyFileUri;
-    const name = this.siblingNames.length > 0 ? this.siblingNames[index] : window.plyFileName;
-
     showLoadingOverlay(name);
     createFileBrowser(this.siblingNames, index, (i) => this.loadFile(i, true));
-
-    if (this.object) {
-      this.upGroup.remove(this.object);
-      const geo = (this.object as THREE.Points | THREE.Mesh).geometry;
-      if (geo) geo.dispose();
-      this.object = null;
-    }
-    if (this.pointMat) { this.pointMat.dispose(); this.pointMat = null; }
-    if (this.meshMat) { this.meshMat.dispose(); this.meshMat = null; }
+    this.removeCurrentFromScene();
 
     loadPly(
       uri,
       (pct) => setLoadingProgress(pct),
       (model) => {
-        this.onLoaded(model, preserveCamera);
+        store(uri, knownMtime, model);
+        this.applyModel(model, preserveCamera, name);
         dismissLoading();
         this.isLoading = false;
         createFileBrowser(this.siblingNames, this.currentIndex, (i) => this.loadFile(i, true));
+        this.kickoffPrefetch(this.currentIndex);
       },
       (msg) => {
         showError(msg);
@@ -226,8 +273,38 @@ class PlyViewer {
     );
   }
 
-  // ── Post-load setup ───────────────────────────────────────────────────
-  private onLoaded(model: LoadedModel, preserveCamera: boolean): void {
+  // Remove the active object from the scene without disposing it.
+  // The cache owns disposal; we only unlink from the scene graph here.
+  private removeCurrentFromScene(): void {
+    if (this.object) {
+      this.upGroup.remove(this.object);
+      this.object = null;
+    }
+    this.pointMat = null;
+    this.meshMat = null;
+  }
+
+  // Start background prefetch of all siblings, closest to currentIdx first.
+  private kickoffPrefetch(currentIdx: number): void {
+    const items: PrefetchItem[] = [];
+    const seen = new Set<number>();
+    for (let delta = 1; delta < this.siblingUris.length; delta++) {
+      for (const idx of [currentIdx + delta, currentIdx - delta]) {
+        if (idx >= 0 && idx < this.siblingUris.length && !seen.has(idx)) {
+          seen.add(idx);
+          items.push({
+            uri: this.siblingUris[idx],
+            fsPath: this.siblingFsPaths[idx],
+            mtime: this.siblingMtimes[idx],
+          });
+        }
+      }
+    }
+    schedulePrefetch(items);
+  }
+
+  // ── Post-load scene setup ─────────────────────────────────────────────
+  private applyModel(model: LoadedModel, preserveCamera: boolean, name: string): void {
     this.maxDim = model.maxDim;
     this.pointMat = model.pointMat;
     this.meshMat = model.meshMat;
@@ -235,10 +312,11 @@ class PlyViewer {
     this.upGroup.add(model.object);
 
     const fitDist = this.maxDim * 1.8;
+    const c = model.center;
 
     if (!preserveCamera) {
-      this.camera.position.set(fitDist * 0.7, fitDist * 0.4, fitDist);
-      this.camera.lookAt(0, 0, 0);
+      this.camera.position.set(c.x + fitDist * 0.7, c.y + fitDist * 0.4, c.z + fitDist);
+      this.camera.lookAt(c.x, c.y, c.z);
       this.syncTarget();
     }
 
@@ -247,13 +325,13 @@ class PlyViewer {
     this.camera.updateProjectionMatrix();
     this.controls.update();
 
-    // "Reset Camera" always snaps to the default view for the current file
-    this.savedCamPos.set(fitDist * 0.7, fitDist * 0.4, fitDist);
-    this.savedTarget.set(0, 0, 0);
+    // "Reset Camera" snaps to the default fit view for the current file
+    this.savedCamPos.set(c.x + fitDist * 0.7, c.y + fitDist * 0.4, c.z + fitDist);
+    this.savedTarget.copy(c);
 
     this.setupHelpers(this.maxDim);
 
-    // Re-apply up axis rotation without moving the camera
+    // Re-apply up axis rotation (no camera reset)
     const [rx, ry, rz] = upAxisRotation(this.upAxis);
     this.upGroup.rotation.set(rx, ry, rz);
 
@@ -269,7 +347,7 @@ class PlyViewer {
       this.pointMat.size = (v / 1000) * this.maxDim;
     }
 
-    // Restore wireframe state on the new material
+    // Restore wireframe state onto the new material instance
     if (this.meshMat) {
       const wireframeCb = document.getElementById("wireframe-toggle") as HTMLInputElement | null;
       if (wireframeCb) this.meshMat.wireframe = wireframeCb.checked;
@@ -281,7 +359,6 @@ class PlyViewer {
     if (rowPoint) rowPoint.style.display = model.isMesh ? "none" : "flex";
     if (rowWire) rowWire.style.display = model.isMesh ? "flex" : "none";
 
-    const name = this.siblingNames[this.currentIndex] ?? window.plyFileName;
     updateStatsFilename(name);
     updateStats(
       model.isMesh ? "Mesh" : "Point Cloud",
