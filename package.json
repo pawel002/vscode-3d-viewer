@@ -1,0 +1,60 @@
+{
+  "name": "ply-viewer",
+  "displayName": "PLY File Viewer",
+  "description": "Interactive 3D point cloud and mesh viewer for PLY files in VS Code",
+  "version": "0.1.0",
+  "publisher": "ply-viewer",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ply",
+    "point cloud",
+    "3d",
+    "viewer",
+    "mesh",
+    "lidar"
+  ],
+  "activationEvents": [],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/local/ply-viewer"
+  },
+  "license": "MIT",
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "plyViewer.plyEditor",
+        "displayName": "PLY Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.ply"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map"
+  },
+  "dependencies": {
+    "three": "^0.162.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.x",
+    "@types/three": "^0.184.1",
+    "@types/vscode": "^1.74.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.3.2",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  }
+}

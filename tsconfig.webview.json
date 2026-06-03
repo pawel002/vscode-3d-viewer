@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "outDir": "./out/webview",
+    "paths": {
+      "three/examples/jsm/*": ["./node_modules/@types/three/examples/jsm/*"]
+    }
+  },
+  "include": ["webview-src/**/*.ts"]
+}
