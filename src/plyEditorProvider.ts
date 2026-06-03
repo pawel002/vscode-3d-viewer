@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import * as fs from "fs";
 
 export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
   public static readonly viewType = "plyViewer.plyEditor";
@@ -30,8 +31,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     webviewPanel: vscode.WebviewPanel,
     _token: vscode.CancellationToken,
   ): Promise<void> {
-    // Allow the webview to access the media folder (for viewer.js)
-    // and the directory that contains the .ply file (to load it via fetch).
     const fileDir = vscode.Uri.file(path.dirname(document.uri.fsPath));
 
     webviewPanel.webview.options = {
@@ -42,11 +41,25 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
       ],
     };
 
+    // Collect sibling .ply files from the same directory
+    const dirPath = path.dirname(document.uri.fsPath);
+    const siblingNames: string[] = fs
+      .readdirSync(dirPath)
+      .filter((f) => f.toLowerCase().endsWith(".ply"))
+      .sort();
+    const siblingUris = siblingNames.map((name) =>
+      webviewPanel.webview
+        .asWebviewUri(vscode.Uri.file(path.join(dirPath, name)))
+        .toString(),
+    );
+
     const fileUri = webviewPanel.webview.asWebviewUri(document.uri);
     webviewPanel.webview.html = this.getHtmlForWebview(
       webviewPanel.webview,
       fileUri,
       document.uri,
+      siblingNames,
+      siblingUris,
     );
   }
 
@@ -54,6 +67,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     webview: vscode.Webview,
     fileUri: vscode.Uri,
     originalUri: vscode.Uri,
+    siblingNames: string[],
+    siblingUris: string[],
   ): string {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "media", "viewer.js"),
@@ -85,6 +100,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     <script nonce="${nonce}">
         window.plyFileUri = ${JSON.stringify(fileUri.toString())};
         window.plyFileName = ${JSON.stringify(filename)};
+        window.plySiblingNames = ${JSON.stringify(siblingNames)};
+        window.plySiblingUris = ${JSON.stringify(siblingUris)};
     </script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
