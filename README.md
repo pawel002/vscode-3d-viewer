@@ -1,5 +1,7 @@
 # PLY Viewer
 
+<img src="res/icon.png" alt="PLY Viewer icon" width="128">
+
 Interactive 3D point cloud and mesh viewer for `.ply` files, built as a native VS Code extension.
 
 ![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.74.0-blue)
