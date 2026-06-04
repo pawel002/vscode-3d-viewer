@@ -11,6 +11,8 @@ Interactive 3D point cloud and mesh viewer for `.ply` files, built as a native V
 - Settings panel: point size, wireframe, grid, axes, up-axis, background colour
 - Stats panel: vertex/face count, colour and normal presence
 - **File browser bar** — when multiple `.ply` files share a directory, jump between them with the prev/next buttons or the ← → arrow keys while keeping the camera position and all settings intact
+- **Client-side caching** — sibling files are pre-loaded in the background (closest neighbours first); switching to an already-cached file is instant. Cached entries are invalidated by file modification time and reloaded silently without freezing the UI
+- **Preserved coordinate space** — geometry is rendered in its original coordinate system, so consecutive point clouds from the same scene stay spatially aligned when flipping between frames
 
 ## Prerequisites
 
@@ -65,10 +67,11 @@ Or via the UI: **Extensions → ⋯ → Install from VSIX…** and pick the gene
 ```
 src/
   extension.ts          VS Code activation entry point
-  plyEditorProvider.ts  Custom editor provider (reads directory siblings)
+  plyEditorProvider.ts  Custom editor provider (reads directory siblings, serves mtime queries)
 webview-src/
   viewer.ts             Three.js scene, camera, render loop, navigation
   loader.ts             PLY loading and geometry processing
+  cache.ts              LRU model cache, background prefetch queue, mtime checking
   ui.ts                 DOM helpers (panels, file browser, overlays)
   styles.ts             Injected CSS
 media/

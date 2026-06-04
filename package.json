@@ -24,6 +24,7 @@
     "url": "https://github.com/local/ply-viewer"
   },
   "license": "MIT",
+  "icon": "res/icon.png",
   "main": "./dist/extension.js",
   "contributes": {
     "customEditors": [
